@@ -323,14 +323,14 @@ export default function ChatInterface() {
                   className="min-h-[80px] max-h-[200px] flex-1 resize-none border-0 bg-transparent p-2 text-gray-900 focus-visible:ring-0 focus-visible:ring-offset-0"
                   onKeyDown={handleKeyDown}
                   onInput={handleInput}
-                  disabled={status === "in_progress"}
+                  disabled={status !== "ready"}
                   rows={1}
                 />
                 <Button
                   type="submit"
                   size="icon"
                   className="h-10 w-10 shrink-0 bg-gray-900 hover:bg-gray-800"
-                  disabled={status === "in_progress"}
+                  disabled={status !== "ready"}
                 >
                   <Send className="h-4 w-4" />
                   <span className="sr-only">Send message</span>
