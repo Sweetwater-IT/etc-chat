@@ -123,7 +123,7 @@ export default function ChatInterface() {
       </div>
 
       <aside
-        className={`fixed left-0 top-0 z-40 h-full w-64 bg-gray-100 transition-transform duration-300 ${
+        className={`fixed left-0 top-0 z-40 h-full w-64 bg-gray-50 transition-transform duration-300 ${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
