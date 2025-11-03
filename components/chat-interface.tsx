@@ -123,12 +123,12 @@ export default function ChatInterface() {
       </div>
 
       <aside
-        className={`fixed left-0 top-0 z-40 h-full w-64 bg-gray-50 transition-transform duration-300 ${
+        className={`fixed left-0 top-0 z-40 h-full w-64 bg-[#fafafa] transition-transform duration-300 ${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex h-full flex-col">
-          <div className="flex items-center justify-between border-b border-gray-200 p-4">
+          <div className="flex items-center justify-between border-b border-gray-200 bg-[#fafafa] p-4">
             <div className="flex-1">
               <h1 className="text-base font-bold text-gray-900">Established Traffic Control</h1>
               <p className="text-xs text-gray-600">AI Assistant</p>
