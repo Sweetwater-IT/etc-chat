@@ -435,7 +435,7 @@ export default function ChatInterface() {
                       type="submit"
                       size="icon"
                       className="h-10 w-10 shrink-0 bg-gray-900 hover:bg-gray-800"
-                      disabled={status !== 0}
+                      disabled={status !== "ready"}
                     >
                       <Send className="h-4 w-4" />
                       <span className="sr-only">Send message</span>
