@@ -330,7 +330,7 @@ export default function ChatInterface() {
                         )}
                       </div>
                     ))}
-                    {status === 1 && (
+                    {status === "streaming" && (
                       <div className="flex gap-3">
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-900">
                           <Sparkles className="h-4 w-4 text-white" />
@@ -428,7 +428,7 @@ export default function ChatInterface() {
                       className="min-h-[80px] max-h-[200px] flex-1 resize-none border-0 bg-transparent p-2 text-gray-900 focus-visible:ring-0 focus-visible:ring-offset-0"
                       onKeyDown={handleKeyDown}
                       onInput={handleInput}
-                      disabled={status !== 0}
+                      disabled={status !== "ready"}
                       rows={1}
                     />
                     <Button
