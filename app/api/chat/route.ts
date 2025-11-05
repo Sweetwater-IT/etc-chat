@@ -7,7 +7,6 @@ import {
 } from "ai";
 import { createXai } from "@ai-sdk/xai";
 import { createClient } from "@supabase/supabase-js";
-
 export const maxDuration = 60;
 
 // === SUPABASE CLIENTS ===
@@ -47,13 +46,11 @@ async function embedQuery(query: string): Promise<number[]> {
       body: JSON.stringify({ inputs: [query] }),
     }
   );
-
   if (!response.ok) {
     const errorBody = await response.text();
     console.error("HF full response:", errorBody);
     throw new Error(`HF Embedding error: ${response.status} - ${response.statusText}`);
   }
-
   const result = await response.json();
   return Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
 }
@@ -84,9 +81,10 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
     return "";
   }
 }
-// === SCHEMA FETCHER (All 6 Product Lines + Status) ===
-let cachedSchema: string | null = null;
-async function getSchema(): Promise<string> {
+
+// === SCHEMA FETCHER (Enhanced: Include Sample JSON Paths if Known) ===
+let cachedSchema: { columns: string; jsonPaths: string } | null = null;
+async function getSchema(): Promise<{ columns: string; jsonPaths: string }> {
   if (cachedSchema) return cachedSchema;
   try {
     const { data, error } = await bidxSupabase
@@ -103,54 +101,120 @@ async function getSchema(): Promise<string> {
         "flagging",
         "status",
       ]);
-    if (error || !data) return "Schema unavailable";
-    cachedSchema = data
+    if (error || !data) return { columns: "Schema unavailable", jsonPaths: "" };
+
+    const columns = data
       .map(row => `${row.table_name}.${row.column_name}: ${row.data_type}`)
       .join("\n");
+
+    // TODO: If you have sample JSON structures, hardcode common paths here for better guidance.
+    // Example (adjust based on your actual data):
+    const jsonPaths = `
+Common JSON Paths (use ->> or -> for extraction):
+- admin_data->>'contractNumber' (string)
+- equipment_rental: array of objects, e.g., elements->>'type' (string), elements->>'quantity' (int)
+- Use json_array_elements(json_column) AS elem LATERAL JOIN for arrays.
+`;
+
+    cachedSchema = { columns, jsonPaths };
     return cachedSchema;
   } catch {
-    return "Schema fetch failed";
+    return { columns: "Schema fetch failed", jsonPaths: "" };
   }
 }
-// === KG SQL VIA LLM (Schema-Driven + Anti-Hallucination) ===
+
+// === HELPER: Validate SQL Columns ===
+function validateSQLColumns(sql: string, schemaColumns: string[]): boolean {
+  // Simple regex to extract potential column references (e.g., table.col or just col).
+  const columnMatches = sql.match(/\b(?:\w+\.)?\w+\b/g) || [];
+  const invalidColumns = columnMatches.filter(col => 
+    !schemaColumns.some(schemaCol => schemaCol.includes(col.replace(/\./, '.')))
+  );
+  // Whitelist common SQL keywords to avoid false positives.
+  const sqlKeywords = ['SELECT', 'FROM', 'WHERE', 'AS', 'JOIN', 'LATERAL', 'json_array_elements'];
+  return invalidColumns.filter(col => !sqlKeywords.includes(col.toUpperCase())).length === 0;
+}
+
+// === KG SQL VIA LLM (Enhanced: Stricter Prompt + Validation) ===
 async function retrieveKG(userQuery: string): Promise<string> {
-  const schema = await getSchema();
-  const sqlPrompt = `You are a SQL expert. USE ONLY BIDX TABLES (estimate_complete, jobs_complete). IGNORE KG TABLES (kg_nodes, kg_edges) unless query mentions "graph" or "nodes".
-SCHEMA (BIDX ONLY):
+  const { columns: schema, jsonPaths } = await getSchema();
+  if (schema.startsWith("Schema")) return schema; // Early bail on schema issues.
+
+  // Extract schema columns for validation (e.g., ["estimate_complete.admin_data", ...]).
+  const schemaColumns = schema.split('\n').map(line => line.split(':')[0].trim());
+
+  // Stricter prompt with examples to reduce hallucinations.
+  const sqlPrompt = `You are a SQL expert. Generate PostgreSQL for Supabase. USE ONLY these exact tables and columns. NO OTHER COLUMNS OR TABLES.
+
+SCHEMA:
 ${schema}
+
+JSON GUIDANCE:
+${jsonPaths}
+
 USER QUERY: "${userQuery}"
-RULES:
-- "bid", "estimate", "pending" → estimate_complete
-- "job", "won", "completed" → jobs_complete
-- JSON arrays: json_array_elements() + LATERAL
-- Filter: item->>'name' or item->>'designation'
-- Contract: admin_data->>'contractNumber'
-- Return ONLY SQL. No explanation. No semicolon.
+
+RULES (MANDATORY):
+- "bid", "estimate", "pending" → estimate_complete table only.
+- "job", "won", "completed" → jobs_complete table only.
+- For JSON arrays in columns like equipment_rental: Use EXACTLY: SELECT ... FROM table, LATERAL json_array_elements(equipment_rental) AS elem WHERE elem->>'type' = 'Type 3'
+- Extract contract: admin_data->>'contractNumber'
+- ALWAYS qualify columns with table (e.g., estimate_complete.admin_data).
+- Return ONLY the SQL query. No explanations. No semicolons. Start with SELECT.
+- If query can't be answered with schema, return "SELECT NULL AS error;"
+
+EXAMPLE for "How many Type 3s on JOB-789?":
+SELECT count(*) FROM jobs_complete, LATERAL json_array_elements(jobs_complete.equipment_rental) AS elem WHERE jobs_complete.admin_data->>'contractNumber' = 'JOB-789' AND elem->>'type' = 'Type 3';
+
 Generate SQL now.`;
-  try {
-    const sqlResult = await streamText({
-      model: xai("grok-4-fast"),
-      prompt: sqlPrompt,
-    });
-    let sql = (await sqlResult.text).trim();
-    if (sql.endsWith(";")) sql = sql.slice(0, -1).trim();
-    if (!sql.toUpperCase().startsWith("SELECT") || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
-      return "[KG: Unsafe query blocked]";
+
+  let attempts = 0;
+  const maxAttempts = 2;
+  let sql = "";
+
+  while (attempts < maxAttempts) {
+    try {
+      const sqlResult = await streamText({
+        model: xai("grok-4-fast"),
+        prompt: sqlPrompt,
+      });
+      sql = (await sqlResult.text).trim();
+      if (sql.endsWith(";")) sql = sql.slice(0, -1).trim();
+
+      // Safety checks (existing + new validation).
+      if (!sql.toUpperCase().startsWith("SELECT") || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
+        throw new Error("Unsafe SQL");
+      }
+      if (!validateSQLColumns(sql, schemaColumns)) {
+        throw new Error("Invalid columns referenced");
+      }
+
+      // If we reach here, SQL is valid—execute.
+      const { data, error } = await bidxSupabase.rpc("execute_custom_sql", { sql_query: sql });
+      if (error) {
+        console.error("KG SQL error:", error);
+        if (attempts < maxAttempts - 1) {
+          attempts++;
+          continue; // Retry on execution error.
+        }
+        return `[KG: Query failed - ${error.message}]`;
+      }
+      if (!data || data.length === 0) return "[KG: No data found]";
+      return data
+        .map((row: any, i: number) => `[KG Result ${i + 1}]\n${JSON.stringify(row, null, 2)}`)
+        .join("\n");
+    } catch (error) {
+      console.error(`KG SQL attempt ${attempts + 1} error:`, error);
+      attempts++;
+      if (attempts >= maxAttempts) {
+        return `[KG: Generation failed after ${maxAttempts} attempts - ${error.message}]`;
+      }
+      // Optional: Adjust prompt for retry, e.g., append "Fix column error from previous attempt."
     }
-    const { data, error } = await bidxSupabase.rpc("execute_custom_sql", { sql_query: sql });
-    if (error) {
-      console.error("KG SQL error:", error);
-      return `[KG: Query failed - ${error.message}]`;
-    }
-    if (!data || data.length === 0) return "[KG: No data found]";
-    return data
-      .map((row: any, i: number) => `[KG Result ${i + 1}]\n${JSON.stringify(row, null, 2)}`)
-      .join("\n");
-  } catch (error) {
-    console.error("KG retrieval error:", error);
-    return "[KG: Retrieval failed]";
   }
+  return "[KG: Unexpected failure]";
 }
+
 // === POST HANDLER ===
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
