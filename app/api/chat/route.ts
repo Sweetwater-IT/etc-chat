@@ -1,4 +1,4 @@
-import { consumeStream, convertToModelMessages, streamText, type UIMessage } from "ai"
+import { consumeStream, convertToModelMessages, streamText, type UIMessage, type ModelMessage } from "ai";
 import { createXai } from '@ai-sdk/xai'; 
 import { createClient } from '@supabase/supabase-js';  
 
@@ -128,24 +128,23 @@ export async function POST(req: Request) {
   const prompt = convertToModelMessages(messages);
 
   const lastUserMsg = messages[messages.length - 1];
-  const userQuery = lastUserMsg?.role === 'user' 
-    ? (lastUserMsg.parts?.[0] as any)?.text || '' 
-    : '';
+  const userQuery =
+    lastUserMsg?.role === 'user' ? ((lastUserMsg.parts?.[0] as any)?.text ?? '') : '';
 
   let mutcdContext = '';
   let kgContext = '';
 
   if (userQuery) {
-    // Parallel retrieval
     [mutcdContext, kgContext] = await Promise.all([
       retrieveMUTCD(userQuery),
-      retrieveKG(userQuery)
+      retrieveKG(userQuery),
     ]);
   }
 
   const fullContext = [mutcdContext, kgContext].filter(Boolean).join('\n\n');
 
-  const enrichedPrompt = [
+  // FIXED: Explicitly type as ModelMessage[]
+  const enrichedPrompt: ModelMessage[] = [
     { role: 'system', content: `${SYSTEM_PROMPT}\n\nContext:\n${fullContext}` },
     ...prompt,
   ];
@@ -158,7 +157,7 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ isAborted }) => {
-      if (isAborted) console.log("Stream aborted");
+      if (isAborted) console.log('Stream aborted');
     },
     consumeSseStream: consumeStream,
   });
