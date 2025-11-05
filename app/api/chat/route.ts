@@ -1,5 +1,4 @@
-import { convertToModelMessages, streamText, type UIMessage } from "ai";
-import { createXai } from '@ai-sdk/xai';  // Correct export for v1+
+import { consumeStream, convertToModelMessages, type UIMessage } from "ai";
 
 export const maxDuration = 30;
 
@@ -7,8 +6,6 @@ const SYSTEM_PROMPT = `
 You are an AI assistant for Established Traffic Control, specializing in MUTCD-based bid estimation for traffic plans.
 - Keep responses concise and professional.
 `;
-
-const xai = createXai({ apiKey: process.env.GROK_API_KEY! });  // Inject key
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
@@ -43,7 +40,7 @@ export async function POST(req: Request) {
       messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
-      max_tokens: 500,  // Snake_case for xAI API (no SDK type error)
+      max_tokens: 500,
     }),
   });
 
@@ -78,7 +75,8 @@ export async function POST(req: Request) {
                 const parsed = JSON.parse(data);
                 const delta = parsed.choices[0]?.delta?.content;
                 if (delta) {
-                  controller.enqueue(new TextEncoder().encode(delta));
+                  const sseData = `data: ${JSON.stringify({ delta })} \n\n`;  // SSE format for AI SDK
+                  controller.enqueue(new TextEncoder().encode(sseData));
                 }
               } catch {}
             }
@@ -92,7 +90,7 @@ export async function POST(req: Request) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Type': 'text/event-stream',  // SSE for frontend
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     },
