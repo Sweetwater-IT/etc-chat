@@ -135,6 +135,12 @@ function validateSQLColumns(sql: string, schemaColumns: string[]): boolean {
   return invalidColumns.filter(col => !sqlKeywords.includes(col.toUpperCase())).length === 0;
 }
 
+// === HELPER: Extract Error Message ===
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 // === KG SQL VIA LLM (Enhanced: Stricter Prompt + Validation) ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const { columns: schema, jsonPaths } = await getSchema();
@@ -197,7 +203,7 @@ Generate SQL now.`;
           attempts++;
           continue; // Retry on execution error.
         }
-        return `[KG: Query failed - ${error.message}]`;
+        return `[KG: Query failed - ${getErrorMessage(error)}]`;
       }
       if (!data || data.length === 0) return "[KG: No data found]";
       return data
@@ -207,7 +213,7 @@ Generate SQL now.`;
       console.error(`KG SQL attempt ${attempts + 1} error:`, error);
       attempts++;
       if (attempts >= maxAttempts) {
-        return `[KG: Generation failed after ${maxAttempts} attempts - ${error.message}]`;
+        return `[KG: Generation failed after ${maxAttempts} attempts - ${getErrorMessage(error)}]`;
       }
       // Optional: Adjust prompt for retry, e.g., append "Fix column error from previous attempt."
     }
