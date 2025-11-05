@@ -58,26 +58,25 @@ async function retrieveChunks(query: string, topK = 5): Promise<any[]> {  // Add
 
 async function retrieveBidxData(userQuery: string): Promise<string> {
   try {
-    // Dynamic parsing: Extract county and month from query
+    // Dynamic parsing: Extract county, month, or "last/recent"
     const countyMatch = userQuery.match(/(bucks|montgomery|bedford|county\s+(\w+))/i);
     const county = countyMatch ? (countyMatch[1] || countyMatch[2]).toLowerCase() : null;
     const monthMatch = userQuery.match(/(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|1|2|3|4|5|6|7|8|9|10|11|12)/i);
     const monthName = monthMatch ? monthMatch[1].toLowerCase() : null;
-    const monthNum = monthName ? new Date(`${monthName} 1, 2024`).getMonth() + 1 : null;  // Convert to 1-12
+    const monthNum = monthName ? new Date(`${monthName} 1, 2024`).getMonth() + 1 : null;
     const yearMatch = userQuery.match(/(\d{4})/);
-    const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();  // Default current year
-
-    // Build date range for month (e.g., September 1-30)
-    const startDate = monthNum ? `${year}-${monthNum.toString().padStart(2, '0')}-01` : null;
-    const endDate = monthNum ? `${year}-${monthNum.toString().padStart(2, '0')}-31` : null;  // Use 31 for simplicity; adjust for Feb if needed
+    const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
+    const lastMatch = userQuery.match(/last|recent|top\s+3?/i);  // Detect "last 3 bids"
 
     // Query jobs_complete (historical WON jobs/estimates)
-    let query = bidxSupabase.from('jobs_complete').select('id, total_revenue, total_cost, admin_data, created_at, job_number').eq('status', 'WON').limit(5);
+    let query = bidxSupabase.from('jobs_complete').select('id, total_revenue, total_cost, admin_data, created_at, job_number').eq('status', 'WON').limit(lastMatch ? 3 : 5).order('created_at', { ascending: false });  // Top 3 recent if "last"
     if (county) {
-      query = query.eq('admin_data->county->name', county.charAt(0).toUpperCase() + county.slice(1));  // e.g., 'Bucks'
+      query = query.eq('admin_data->county->name', county.charAt(0).toUpperCase() + county.slice(1));
     }
     if (monthNum) {
-      query = query.gte('created_at', startDate).lte('created_at', endDate);  // Date range filter
+      const startDate = `${year}-${monthNum.toString().padStart(2, '0')}-01`;
+      const endDate = `${year}-${monthNum.toString().padStart(2, '0')}-31`;
+      query = query.gte('created_at', startDate).lte('created_at', endDate);
     }
 
     const { data } = await query;
@@ -85,8 +84,8 @@ async function retrieveBidxData(userQuery: string): Promise<string> {
     console.log('Retrieved Bidx data:', data?.length || 0);
     return data?.map(row => {
       const admin = JSON.parse(row.admin_data || '{}');
-      return `Job #${row.job_number} (ID ${row.id}): Revenue $${row.total_revenue}, Cost $${row.total_cost}, County ${admin.county?.name || 'N/A'}, Date ${row.created_at.slice(0, 10)}`;
-    }).join('\n') || 'No matching jobs found.';
+      return `Job #${row.job_number} (ID ${row.id}): Revenue $${row.total_revenue || 'N/A'}, Cost $${row.total_cost || 'N/A'}, County ${admin.county?.name || 'N/A'}, Date ${row.created_at.slice(0, 10)}`;
+    }).join('\n') || 'No matching jobs found - try more details like county or date.';
   } catch (error) {
     console.error('Bidx retrieval error:', error);
     return '';
