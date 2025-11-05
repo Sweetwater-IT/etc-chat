@@ -20,7 +20,7 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 async function embedQuery(query: string): Promise<number[]> {
   const response = await hf.featureExtraction({
     model: 'sentence-transformers/all-MiniLM-L6-v2',
-    inputs: query,
+    inputs: [query],  // Wrap in array for single input
   });
   return Array.isArray(response) ? response : [response];  // Flatten if needed
 }
