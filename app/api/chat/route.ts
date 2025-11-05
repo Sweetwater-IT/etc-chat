@@ -71,7 +71,7 @@ async function generateSQLAndExecute(userQuery: string): Promise<string> {
       prompt: sqlPrompt,
     });
 
-    const sql = (await sqlResult.text()).trim();
+    const sql = (await (sqlResult.text as () => Promise<string>)()).trim();
     console.log('Generated SQL:', sql); // Debug
 
     // Validate SQL (basic safety)
