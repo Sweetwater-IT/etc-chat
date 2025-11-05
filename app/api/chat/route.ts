@@ -101,7 +101,7 @@ Return ONLY SQL.`;
       model: xai('grok-4-fast'),
       prompt: sqlPrompt,
     });
-    const sql = (await sqlResult.text()).trim();
+    const sql = (await sqlResult.text).trim();
 
     // Safety check
     if (!sql.toUpperCase().startsWith('SELECT') || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
