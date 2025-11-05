@@ -9,9 +9,15 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
-  // Safe extraction for TS (fixes the 'content' error)
+  // Safe extraction for TS (fixes the 'text' error)
   const lastMessage = messages[messages.length - 1];
-  const userQuery = lastMessage?.role === 'user' && lastMessage.parts?.length > 0 ? lastMessage.parts[0].text || '' : '';
+  let userQuery = '';
+  if (lastMessage?.role === 'user' && lastMessage.parts?.length > 0) {
+    const firstPart = lastMessage.parts[0];
+    if (firstPart.type === 'text') {
+      userQuery = firstPart.content || '';
+    }
+  }
 
   let enrichedMessages = convertToModelMessages(messages);
 
@@ -30,7 +36,7 @@ export async function POST(req: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'grok-4-fast',
+      model: 'grok-beta',
       messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
