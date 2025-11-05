@@ -22,15 +22,16 @@ async function embedQuery(query: string): Promise<number[]> {
       'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ inputs: query }),
+    body: JSON.stringify({ inputs: [query] }),  // Array for single input (fixes 400)
   });
 
   if (!response.ok) {
-    throw new Error(`HF Embedding error: ${response.statusText}`);
+    console.error('HF full response:', await response.text());  // Debug: Logs body for details
+    throw new Error(`HF Embedding error: ${response.status} - ${response.statusText}`);
   }
 
   const result = await response.json();
-  return result as number[];  // HF returns the vector directly
+  return Array.isArray(result) ? result[0] : result;  // Extract vector (384-dim array)
 }
 
 async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
