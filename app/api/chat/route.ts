@@ -34,17 +34,17 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
-// === EMBEDDING FUNCTION (HF Router - sentences payload) ===
+// === EMBEDDING FUNCTION (HF Router - bge-large-en-v1.5) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
-    "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
+    "https://router.huggingface.co/hf-inference/models/BAAI/bge-large-en-v1.5",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: query }),
+      body: JSON.stringify({ inputs: [query] }),
     }
   );
 
@@ -73,7 +73,6 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
       match_threshold: 0.5,
       match_count: topK,
     });
-
     return (
       data?.map(
         (c: MutcdChunk) =>
@@ -85,12 +84,10 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
     return "";
   }
 }
-
 // === SCHEMA FETCHER (All 6 Product Lines + Status) ===
 let cachedSchema: string | null = null;
 async function getSchema(): Promise<string> {
   if (cachedSchema) return cachedSchema;
-
   try {
     const { data, error } = await bidxSupabase
       .from("information_schema.columns")
@@ -106,30 +103,22 @@ async function getSchema(): Promise<string> {
         "flagging",
         "status",
       ]);
-
     if (error || !data) return "Schema unavailable";
-
     cachedSchema = data
       .map(row => `${row.table_name}.${row.column_name}: ${row.data_type}`)
       .join("\n");
-
     return cachedSchema;
   } catch {
     return "Schema fetch failed";
   }
 }
-
 // === KG SQL VIA LLM (Schema-Driven + Anti-Hallucination) ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const schema = await getSchema();
-
   const sqlPrompt = `You are a SQL expert. USE ONLY THESE COLUMNS. NO OTHER COLUMNS. NO "items". NO "products". ONLY SCHEMA.
-
 SCHEMA (EXACT COLUMNS ONLY):
 ${schema}
-
 USER QUERY: "${userQuery}"
-
 RULES:
 - "bid", "estimate", "pending" → estimate_complete
 - "job", "won", "completed" → jobs_complete
@@ -137,31 +126,23 @@ RULES:
 - Filter: item->>'name' or item->>'designation'
 - Contract: admin_data->>'contractNumber'
 - Return ONLY SQL. No explanation. No semicolon.
-
 Generate SQL now.`;
-
   try {
     const sqlResult = await streamText({
       model: xai("grok-4-fast"),
       prompt: sqlPrompt,
     });
-
     let sql = (await sqlResult.text).trim();
     if (sql.endsWith(";")) sql = sql.slice(0, -1).trim();
-
     if (!sql.toUpperCase().startsWith("SELECT") || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
       return "[KG: Unsafe query blocked]";
     }
-
     const { data, error } = await bidxSupabase.rpc("execute_custom_sql", { sql_query: sql });
-
     if (error) {
       console.error("KG SQL error:", error);
       return `[KG: Query failed - ${error.message}]`;
     }
-
     if (!data || data.length === 0) return "[KG: No data found]";
-
     return data
       .map((row: any, i: number) => `[KG Result ${i + 1}]\n${JSON.stringify(row, null, 2)}`)
       .join("\n");
@@ -170,39 +151,31 @@ Generate SQL now.`;
     return "[KG: Retrieval failed]";
   }
 }
-
 // === POST HANDLER ===
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
   const prompt = convertToModelMessages(messages);
-
   const lastUserMsg = messages[messages.length - 1];
   const userQuery =
     lastUserMsg?.role === "user" ? ((lastUserMsg.parts?.[0] as any)?.text ?? "") : "";
-
   let mutcdContext = "";
   let kgContext = "";
-
   if (userQuery) {
     [mutcdContext, kgContext] = await Promise.all([
       retrieveMUTCD(userQuery),
       retrieveKG(userQuery),
     ]);
   }
-
   const fullContext = [mutcdContext, kgContext].filter(Boolean).join("\n\n");
-
   const enrichedPrompt: ModelMessage[] = [
     { role: "system", content: `${SYSTEM_PROMPT}\n\nContext:\n${fullContext}` },
     ...prompt,
   ];
-
   const result = streamText({
     model: xai("grok-4-fast"),
     prompt: enrichedPrompt,
     abortSignal: req.signal,
   });
-
   return result.toUIMessageStreamResponse({
     onFinish: async ({ isAborted }) => {
       if (isAborted) console.log("Stream aborted");
