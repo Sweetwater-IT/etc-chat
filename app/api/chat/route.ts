@@ -44,7 +44,7 @@ async function embedQuery(query: string): Promise<number[]> {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ sentences: [query] }), // FIXED: sentences array for router similarity pipeline
+      body: JSON.stringify({ inputs: [query] }), // FIXED: inputs array for router
     }
   );
 
