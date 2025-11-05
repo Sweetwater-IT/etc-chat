@@ -32,18 +32,69 @@ export async function POST(req: Request) {
 
   console.log('Sending to Grok:', enrichedMessages.length, 'messages');  // Debug
 
-  const result = streamText({
-    model: xai('grok-4-fast'),  // Your model + SDK streaming
-    messages: enrichedMessages,
-    temperature: 0.7,
-    max_Tokens: 500,
-    abortSignal: req.signal,
+  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'grok-4-fast',
+      messages: enrichedMessages,
+      stream: true,
+      temperature: 0.7,
+      max_tokens: 500,  // Snake_case for xAI API (no SDK type error)
+    }),
   });
 
-  return result.toUIMessageStreamResponse({
-    onFinish: async ({ isAborted }) => {
-      if (isAborted) console.log('Stream aborted');  // Debug
+  console.log('Grok response status:', response.status);  // Debug
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error('Grok full error:', errorBody);
+    throw new Error(`Grok API error: ${response.statusText}`);
+  }
+
+  // Adapt SSE to ai SDK stream
+  const stream = new ReadableStream({
+    start(controller) {
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const pump = () => {
+        reader?.read().then(({ done, value }) => {
+          if (done) {
+            controller.close();
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices[0]?.delta?.content;
+                if (delta) {
+                  controller.enqueue(new TextEncoder().encode(delta));
+                }
+              } catch {}
+            }
+          }
+          pump();
+        }).catch(err => controller.error(err));
+      };
+      pump();
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
     },
-    consumeSseStream: consumeStream,
   });
 }
