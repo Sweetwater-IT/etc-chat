@@ -132,7 +132,7 @@ export async function POST(req: Request) {
   const result = streamText({
     model: xai('grok-4-fast'),
     prompt: enrichedPrompt,
-    abortSignal: req.json,
+    abortSignal: req.signal,  
   })
 
   return result.toUIMessageStreamResponse({
