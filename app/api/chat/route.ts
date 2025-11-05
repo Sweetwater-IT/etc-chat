@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
   // Safe extraction for TS (fixes the 'content' error)
   const lastMessage = messages[messages.length - 1];
-  const userQuery = lastMessage?.role === 'user' && lastMessage.parts?.length > 0 ? lastMessage.parts[0].content || '' : '';
+  const userQuery = lastMessage?.role === 'user' && lastMessage.parts?.length > 0 ? lastMessage.parts[0].text || '' : '';
 
   let enrichedMessages = convertToModelMessages(messages);
 
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'grok-beta',
+      model: 'grok-4-fast',
       messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
