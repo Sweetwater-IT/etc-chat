@@ -20,9 +20,11 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 async function embedQuery(query: string): Promise<number[]> {
   const response = await hf.featureExtraction({
     model: 'sentence-transformers/all-MiniLM-L6-v2',
-    inputs: query,  // Single string input for vector(384)
+    inputs: [query],  // Batch of 1 to match expected return type
   });
-  return Array.isArray(response) ? response : [response];  // Ensure number[] output
+  // HF returns { '0': vector } for array input; extract the vector
+  const embedding = Object.values(response)[0] as number[];
+  return embedding;
 }
 
 async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
