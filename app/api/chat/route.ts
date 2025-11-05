@@ -39,7 +39,7 @@ You are an AI assistant for Established Traffic Control.
 // === EMBEDDING FUNCTION (Hugging Face - Direct Model) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
-    "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+   "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
     {
       method: "POST",
       headers: {
