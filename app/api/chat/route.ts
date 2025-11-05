@@ -36,7 +36,7 @@ export async function POST(req: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'grok-beta',
+      model: 'grok-4-fast',
       messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
