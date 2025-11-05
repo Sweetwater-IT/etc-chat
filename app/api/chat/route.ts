@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   if (lastMessage?.role === 'user' && lastMessage.parts?.length > 0) {
     const firstPart = lastMessage.parts[0];
     if (firstPart.type === 'text') {
-      userQuery = firstPart.content || '';
+      userQuery = firstMessage.text || '';
     }
   }
 
