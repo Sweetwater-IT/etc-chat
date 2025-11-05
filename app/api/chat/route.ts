@@ -15,12 +15,10 @@ const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_KEY!
 );
-
 const bidxSupabase = createClient(
   process.env.BIDX_SUPABASE_URL!,
   process.env.BIDX_SUPABASE_SERVICE_KEY!
 );
-
 const xai = createXai({ apiKey: process.env.GROK_API_KEY! });
 
 // === SYSTEM PROMPT ===
@@ -36,26 +34,7 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
-// === SCHEMA FETCHER ===
-async function getSchema(): Promise<string> {
-  try {
-    const { data, error } = await bidxSupabase
-      .from('information_schema.columns')
-      .select('table_name, column_name, data_type')
-      .in('table_name', ['jobs_complete'])
-      .in('column_name', ['admin_data', 'equipment_rental', 'mpt_rental']);
-
-    if (error || !data) return "Schema unavailable";
-
-    return data
-      .map(row => `${row.table_name}.${row.column_name}: ${row.data_type}`)
-      .join('\n');
-  } catch {
-    return "Schema fetch failed";
-  }
-}
-
-// === EMBEDDING FUNCTION (Hugging Face - Direct Model) ===
+// === EMBEDDING FUNCTION (HF Sentence-Similarity) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
     "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
@@ -65,7 +44,7 @@ async function embedQuery(query: string): Promise<number[]> {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ sentences: [query] }), // ← REQUIRED payload
+      body: JSON.stringify({ sentences: [query] }),
     }
   );
 
@@ -76,20 +55,16 @@ async function embedQuery(query: string): Promise<number[]> {
   }
 
   const result = await response.json();
-  // Returns: [[0.12, -0.34, …]] – take the first (and only) embedding
   return Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
 }
 
 // === MUTCD CHUNK TYPE ===
 interface MutcdChunk {
-  metadata: {
-    source: string;
-    chunk_index: number;
-  };
+  metadata: { source: string; chunk_index: number };
   content: string;
 }
 
-// === MUTCD RAG (uses supabase) ===
+// === MUTCD RAG ===
 async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
   try {
     const queryEmbedding = await embedQuery(query);
@@ -111,18 +86,55 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
   }
 }
 
-// === KG SQL VIA LLM (uses bidxSupabase) ===
+// === SCHEMA FETCHER (All 6 Product Lines + Status) ===
+let cachedSchema: string | null = null;
+async function getSchema(): Promise<string> {
+  if (cachedSchema) return cachedSchema;
+
+  try {
+    const { data, error } = await bidxSupabase
+      .from("information_schema.columns")
+      .select("table_name, column_name, data_type")
+      .in("table_name", ["estimate_complete", "jobs_complete"])
+      .in("column_name", [
+        "admin_data",
+        "equipment_rental",
+        "mpt_rental",
+        "permanent_signs",
+        "sale_items",
+        "service_work",
+        "flagging",
+        "status",
+      ]);
+
+    if (error || !data) return "Schema unavailable";
+
+    cachedSchema = data
+      .map(row => `${row.table_name}.${row.column_name}: ${row.data_type}`)
+      .join("\n");
+
+    return cachedSchema;
+  } catch {
+    return "Schema fetch failed";
+  }
+}
+
+// === KG SQL VIA LLM (Schema-Driven) ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const schema = await getSchema();
 
-  const sqlPrompt = `You are a SQL expert. Use this schema to answer: "${userQuery}"
+  const sqlPrompt = `You are a SQL expert.
 
 SCHEMA:
 ${schema}
 
+USER QUERY: "${userQuery}"
+
 RULES:
-- equipment_rental is JSON array → use json_array_elements() + LATERAL
-- Filter by item->>'name'
+- If query contains "bid", "estimate", "pending" → use estimate_complete
+- If query contains "job", "won", "completed" → use jobs_complete
+- All product lines are JSON arrays → use json_array_elements() + LATERAL
+- Filter by item->>'name' or item->>'designation'
 - Contract: admin_data->>'contractNumber'
 - Return ONLY SQL. No explanation. No semicolon.
 
