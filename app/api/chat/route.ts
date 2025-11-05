@@ -1,4 +1,5 @@
-import { consumeStream, convertToModelMessages, type UIMessage } from "ai";
+import { convertToModelMessages, streamText, type UIMessage } from "ai";
+import { grok } from '@ai-sdk/xai';  // AI SDK + xAI for easy streaming
 
 export const maxDuration = 30;
 
@@ -9,16 +10,7 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
-  // Safe extraction for TS (fixes the 'text' error)
-  const lastMessage = messages[messages.length - 1];
-  let userQuery = '';
-  if (lastMessage?.role === 'user' && lastMessage.parts?.length > 0) {
-    const firstPart = lastMessage.parts[0];
-    if (firstPart.type === 'text') {
-      userQuery = firstPart.text || '';
-    }
-  }
-
+  // Safe extraction for TS (uses AI SDK's conversion)
   let enrichedMessages = convertToModelMessages(messages);
 
   // Basic: Skip RAG for baseline test
@@ -29,68 +21,18 @@ export async function POST(req: Request) {
 
   console.log('Sending to Grok:', enrichedMessages.length, 'messages');  // Debug
 
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.GROK_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'grok-4-fast',
-      messages: enrichedMessages,
-      stream: true,
-      temperature: 0.7,
-      max_tokens: 500,
-    }),
+  const result = streamText({
+    model: grok('grok-4-fast'),  // Your model + AI SDK streaming
+    messages: enrichedMessages,
+    temperature: 0.7,
+    maxTokens: 500,
+    abortSignal: req.signal,
   });
 
-  if (!response.ok) {
-    console.error('Grok response status:', response.status);
-    const errorBody = await response.text();
-    console.error('Grok full error:', errorBody);
-    throw new Error(`Grok API error: ${response.statusText}`);
-  }
-
-  // Adapt SSE to ai SDK stream
-  const stream = new ReadableStream({
-    start(controller) {
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      const pump = () => {
-        reader?.read().then(({ done, value }) => {
-          if (done) {
-            controller.close();
-            return;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-              try {
-                const parsed = JSON.parse(data);
-                const delta = parsed.choices[0]?.delta?.content;
-                if (delta) {
-                  controller.enqueue(new TextEncoder().encode(delta));
-                }
-              } catch {}
-            }
-          }
-          pump();
-        }).catch(err => controller.error(err));
-      };
-      pump();
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+  return result.toUIMessageStreamResponse({
+    onFinish: async ({ isAborted }) => {
+      if (isAborted) console.log('Stream aborted');  // Debug
     },
+    consumeSseStream: consumeStream,
   });
 }
