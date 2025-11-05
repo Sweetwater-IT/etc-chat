@@ -8,7 +8,7 @@ import {
 import { createXai } from "@ai-sdk/xai";
 import { createClient } from "@supabase/supabase-js";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // === SUPABASE CLIENTS ===
 const supabase = createClient(
