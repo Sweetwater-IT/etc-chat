@@ -56,12 +56,15 @@ async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
 async function generateSQLAndExecute(userQuery: string): Promise<string> {
   try {
     // Prompt Grok to generate SQL for Bidx data
-    const sqlPrompt = `You are a SQL expert. Generate a safe SELECT query for the following user request on Bidx data (views: jobs_complete, estimate_complete).
-    Use jobs_complete (includes estimate data). Only SELECT, no INSERT/UPDATE/DELETE.
-    Filter by status='WON' for historical, or use available_jobs for open bids.
-    Handle limits (e.g., last 6), conditions (e.g., flagging > 400), and ordering (e.g., created_at DESC).
-    Return ONLY the SQL query, no explanation or markdown.
-    Request: ${userQuery}`;
+    const sqlPrompt = `You are a SQL expert. Generate a safe SELECT query for the following user request on Bidx data (views: jobs_complete, estimate_complete; tables: available_jobs, bid_estimates, admin_data_entries, flagging_entries).
+- For historical bids/jobs: Use jobs_complete (joins estimate_complete).
+- For open bids: Use available_jobs.
+- For specific bid details (e.g., "bid 109995 county"): Join bid_estimates and admin_data_entries on bid_estimate_id = id.
+- For flagging: Join flagging_entries.
+- Only SELECT, no INSERT/UPDATE/DELETE.
+- Handle limits (e.g., last 6), conditions (e.g., flagging > 400), and ordering (e.g., created_at DESC).
+- Return ONLY the SQL query, no explanation or markdown.
+- Request: ${userQuery}`;
 
     const sqlResult = await streamText({
       model: xai('grok-4-fast'),
