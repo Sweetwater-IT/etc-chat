@@ -4,6 +4,14 @@ import { createClient } from '@supabase/supabase-js';
 
 export const maxDuration = 30
 
+interface MutcdChunk {
+  metadata: {
+    source: string;
+    chunk_index: number;
+  };
+  content: string;
+}
+
 const xai = createXai({ apiKey: process.env.GROK_API_KEY! }); 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);  
 // Assuming KG is in the same Supabase project as MUTCD
@@ -42,17 +50,21 @@ async function embedQuery(query: string): Promise<number[]> {
 }
 
 // === MUTCD RAG ===
-async function retrieveMUTCD(query: string, topK = 5): Promise<string> {  
+async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
   try {
     const queryEmbedding = await embedQuery(query);
-    const { data } = await supabase.rpc('match_documents', {
+    const { data }: { data: MutcdChunk[] | null } = await supabase.rpc('match_documents', {
       query_embedding: queryEmbedding,
       match_threshold: 0.5,
       match_count: topK,
     });
-    return data?.map(c => 
-      `[MUTCD: ${c.metadata.source}, Chunk ${c.metadata.chunk_index}]\n${c.content}`
-    ).join('\n\n') || '';
+
+    return (
+      data?.map(
+        (c: MutcdChunk) =>
+          `[MUTCD: ${c.metadata.source}, Chunk ${c.metadata.chunk_index}]\n${c.content}`
+      ).join('\n\n') ?? ''
+    );
   } catch (error) {
     console.error('MUTCD retrieval error:', error);
     return '';
