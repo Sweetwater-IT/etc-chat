@@ -67,7 +67,7 @@ async function generateSQLAndExecute(userQuery: string): Promise<string> {
       model: xai('grok-4-fast'),
       prompt: sqlPrompt,
     });
-    const sql = await sqlResult.text().then(text => text.trim());  // Use .then() for Promise resolution
+    const sql = sqlResult.toString().trim();
     console.log('Generated SQL:', sql); // Debug
 
     // Validate SQL (basic safety)
