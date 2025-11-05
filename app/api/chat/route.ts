@@ -34,17 +34,17 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
-// === EMBEDDING FUNCTION (HF Direct Inference) ===
+// === EMBEDDING FUNCTION (HF Router - sentences payload) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
-    "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+    "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: query }), // ← String for feature-extraction
+      body: JSON.stringify({ sentences: [query] }), // FIXED: sentences array for router similarity pipeline
     }
   );
 
