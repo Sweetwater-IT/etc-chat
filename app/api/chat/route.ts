@@ -34,7 +34,7 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
-// === EMBEDDING FUNCTION (HF - inputs key) ===
+// === EMBEDDING FUNCTION (HF Router - Correct Payload) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
     "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
@@ -44,7 +44,7 @@ async function embedQuery(query: string): Promise<number[]> {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: [query] }), // ← inputs, not sentences
+      body: JSON.stringify({ sentences: [query] }), // FIXED: sentences array
     }
   );
 
@@ -119,24 +119,24 @@ async function getSchema(): Promise<string> {
   }
 }
 
-// === KG SQL VIA LLM (Schema-Driven + No Hallucination) ===
+// === KG SQL VIA LLM (Schema-Driven + Anti-Hallucination) ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const schema = await getSchema();
 
-  const sqlPrompt = `You are a SQL expert. DO NOT HALLUCINATE COLUMNS.
+  const sqlPrompt = `You are a SQL expert. DO NOT INVENT COLUMNS OR TABLES. ONLY USE THESE:
 
-SCHEMA (ONLY THESE COLUMNS EXIST):
+SCHEMA (EXACT COLUMNS):
 ${schema}
 
 USER QUERY: "${userQuery}"
 
 RULES:
-- If query has "bid", "estimate", "pending" → use estimate_complete
-- If query has "job", "won", "completed" → use jobs_complete
-- All product lines are JSON arrays → use json_array_elements() + LATERAL
-- Filter by item->>'name' or item->>'designation'
+- "bid", "estimate", "pending" → estimate_complete
+- "job", "won", "completed" → jobs_complete
+- JSON arrays: json_array_elements() + LATERAL
+- Filter: item->>'name' or item->>'designation'
 - Contract: admin_data->>'contractNumber'
-- ONLY use columns from schema above
+- ONLY schema columns. No other columns.
 - Return ONLY SQL. No explanation. No semicolon.
 
 Generate SQL now.`;
