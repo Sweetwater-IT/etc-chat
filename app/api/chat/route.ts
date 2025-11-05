@@ -34,17 +34,17 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
-// === EMBEDDING FUNCTION (HF Router - Correct Payload) ===
+// === EMBEDDING FUNCTION (HF Direct Inference) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
-    "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
+    "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: [query] }),
+      body: JSON.stringify({ inputs: query }), // ← String for feature-extraction
     }
   );
 
@@ -123,9 +123,9 @@ async function getSchema(): Promise<string> {
 async function retrieveKG(userQuery: string): Promise<string> {
   const schema = await getSchema();
 
-  const sqlPrompt = `You are a SQL expert. DO NOT INVENT COLUMNS OR TABLES. ONLY USE THESE:
+  const sqlPrompt = `You are a SQL expert. USE ONLY THESE COLUMNS. NO OTHER COLUMNS. NO "items". NO "products". ONLY SCHEMA.
 
-SCHEMA (EXACT COLUMNS):
+SCHEMA (EXACT COLUMNS ONLY):
 ${schema}
 
 USER QUERY: "${userQuery}"
@@ -136,7 +136,6 @@ RULES:
 - JSON arrays: json_array_elements() + LATERAL
 - Filter: item->>'name' or item->>'designation'
 - Contract: admin_data->>'contractNumber'
-- ONLY schema columns. No other columns.
 - Return ONLY SQL. No explanation. No semicolon.
 
 Generate SQL now.`;
