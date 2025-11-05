@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     model: xai('grok-4-fast'),  // Your model + SDK streaming
     messages: enrichedMessages,
     temperature: 0.7,
-    maxTokens: 500,
+    max_Tokens: 500,
     abortSignal: req.signal,
   });
 
