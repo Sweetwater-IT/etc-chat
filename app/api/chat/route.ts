@@ -1,5 +1,5 @@
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
-import { grok } from '@ai-sdk/xai';  // AI SDK + xAI for easy streaming
+import { createXai } from '@ai-sdk/xai';  // Correct export for v1+
 
 export const maxDuration = 30;
 
@@ -8,9 +8,20 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 - Keep responses concise and professional.
 `;
 
+const xai = createXai({ apiKey: process.env.GROK_API_KEY! });  // Inject key
+
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
-  // Safe extraction for TS (uses AI SDK's conversion)
+  // Safe extraction for TS
+  const lastMessage = messages[messages.length - 1];
+  let userQuery = '';
+  if (lastMessage?.role === 'user' && lastMessage.parts?.length > 0) {
+    const firstPart = lastMessage.parts[0];
+    if (firstPart.type === 'text') {
+      userQuery = firstPart.text || '';
+    }
+  }
+
   let enrichedMessages = convertToModelMessages(messages);
 
   // Basic: Skip RAG for baseline test
@@ -22,7 +33,7 @@ export async function POST(req: Request) {
   console.log('Sending to Grok:', enrichedMessages.length, 'messages');  // Debug
 
   const result = streamText({
-    model: grok('grok-4-fast'),  // Your model + AI SDK streaming
+    model: xai('grok-4-fast'),  // Your model + SDK streaming
     messages: enrichedMessages,
     temperature: 0.7,
     maxTokens: 500,
