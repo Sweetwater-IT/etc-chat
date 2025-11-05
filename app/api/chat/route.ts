@@ -1,14 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
-import { HfInference } from '@huggingface/inference';
 import { consumeStream, convertToModelMessages, streamText, type UIMessage } from "ai";
 
 export const maxDuration = 30;
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);
-const hf = new HfInference({
-  token: process.env.HUGGINGFACE_API_KEY!,
-  baseUrl: 'https://router.huggingface.co/hf-inference'  // Add this for new endpoint
-});
+
 const SYSTEM_PROMPT = `
 You are an AI assistant for Established Traffic Control, specializing in MUTCD-based bid estimation for traffic plans.
 - Use retrieved context from MUTCD docs and historical bids/jobs.
@@ -18,14 +14,23 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 - Reference edge cases from instructions if relevant.
 - Keep responses concise and professional.
 `;
+
 async function embedQuery(query: string): Promise<number[]> {
-  const response = await hf.featureExtraction({
-    model: 'sentence-transformers/all-MiniLM-L6-v2',
-    inputs: [{ text: query }] as Record<string, unknown>[], // Object wrapper for single input (matches TS)
+  const response = await fetch('https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ inputs: query }),
   });
-  // Extract the vector from response (HF returns array or object)
-  const embedding = Array.isArray(response) ? response[0] : (response as any)[0];
-  return embedding as number[];
+
+  if (!response.ok) {
+    throw new Error(`HF Embedding error: ${response.statusText}`);
+  }
+
+  const result = await response.json();
+  return result as number[];  // HF returns the vector directly
 }
 
 async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
@@ -84,6 +89,7 @@ export async function POST(req: Request) {
   });
 
   if (!response.ok) {
+    console.error('Grok response status:', response.status);  // Debug log
     throw new Error(`Grok API error: ${response.statusText}`);
   }
 
@@ -107,7 +113,7 @@ export async function POST(req: Request) {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
-              if (data === '[DONE]') continue;
+              if (data === '[DONE'] ) continue;
               try {
                 const parsed = JSON.parse(data);
                 const delta = parsed.choices[0]?.delta?.content;
