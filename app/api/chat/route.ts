@@ -39,14 +39,14 @@ You are an AI assistant for Established Traffic Control.
 // === EMBEDDING FUNCTION (Hugging Face - Direct Model) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
-   "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
+    "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: query }), // ← STRING
+      body: JSON.stringify({ sentences: [query] }), // ← REQUIRED payload
     }
   );
 
@@ -57,7 +57,7 @@ async function embedQuery(query: string): Promise<number[]> {
   }
 
   const result = await response.json();
-  // For feature-extraction: returns array of arrays → take first
+  // Returns: [[0.12, -0.34, …]] – take the first (and only) embedding
   return Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
 }
 
