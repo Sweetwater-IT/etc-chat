@@ -1,22 +1,29 @@
-import { consumeStream, convertToModelMessages, streamText, type UIMessage, type ModelMessage } from "ai";
-import { createXai } from '@ai-sdk/xai'; 
-import { createClient } from '@supabase/supabase-js';  
+import {
+  consumeStream,
+  convertToModelMessages,
+  streamText,
+  type UIMessage,
+  type ModelMessage,
+} from "ai";
+import { createXai } from "@ai-sdk/xai";
+import { createClient } from "@supabase/supabase-js";
 
-export const maxDuration = 30
+export const maxDuration = 30;
 
-interface MutcdChunk {
-  metadata: {
-    source: string;
-    chunk_index: number;
-  };
-  content: string;
-}
+// === SUPABASE CLIENTS ===
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_KEY!
+);
 
-const xai = createXai({ apiKey: process.env.GROK_API_KEY! }); 
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);  
-// Assuming KG is in the same Supabase project as MUTCD
-// If not, create a separate client: const kgSupabase = createClient(...)
+const bidxSupabase = createClient(
+  process.env.BIDX_SUPABASE_URL!,
+  process.env.BIDX_SUPABASE_SERVICE_KEY!
+);
 
+const xai = createXai({ apiKey: process.env.GROK_API_KEY! });
+
+// === SYSTEM PROMPT ===
 const SYSTEM_PROMPT = `
 You are an AI assistant for Established Traffic Control.
 - Use MUTCD context for standards and rules.
@@ -29,31 +36,44 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
-async function embedQuery(query: string): Promise<number[]> {  
-  const response = await fetch('https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ inputs: [query] }),
-  });
+// === EMBEDDING FUNCTION (Hugging Face) ===
+async function embedQuery(query: string): Promise<number[]> {
+  const response = await fetch(
+    "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ inputs: query }), // ← STRING, not array
+    }
+  );
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error('HF full response:', errorBody);
+    console.error("HF full response:", errorBody);
     throw new Error(`HF Embedding error: ${response.status} - ${response.statusText}`);
   }
 
   const result = await response.json();
-  return Array.isArray(result) ? result[0] : result;
+  return Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
 }
 
-// === MUTCD RAG ===
+// === MUTCD CHUNK TYPE ===
+interface MutcdChunk {
+  metadata: {
+    source: string;
+    chunk_index: number;
+  };
+  content: string;
+}
+
+// === MUTCD RAG (uses supabase) ===
 async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
   try {
     const queryEmbedding = await embedQuery(query);
-    const { data }: { data: MutcdChunk[] | null } = await supabase.rpc('match_documents', {
+    const { data }: { data: MutcdChunk[] | null } = await supabase.rpc("match_documents", {
       query_embedding: queryEmbedding,
       match_threshold: 0.5,
       match_count: topK,
@@ -63,25 +83,26 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
       data?.map(
         (c: MutcdChunk) =>
           `[MUTCD: ${c.metadata.source}, Chunk ${c.metadata.chunk_index}]\n${c.content}`
-      ).join('\n\n') ?? ''
+      ).join("\n\n") ?? ""
     );
   } catch (error) {
-    console.error('MUTCD retrieval error:', error);
-    return '';
+    console.error("MUTCD retrieval error:", error);
+    return "";
   }
 }
 
-// === KG SQL via LLM ===
-// === KG SQL via LLM ===
+// === KG SQL VIA LLM (uses bidxSupabase) ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const sqlPrompt = `You are a SQL expert for a traffic control Knowledge Graph.
 Tables:
 - kg_nodes(id uuid, type text, label text, properties jsonb, embedding vector)
 - kg_edges(id uuid, source_id uuid, target_id uuid, relationship text, properties jsonb)
+
 Generate a SAFE SELECT query to answer: "${userQuery}"
 - Use JOINs to traverse relationships.
 - Access JSONB with ->> 'key'
 - Return ONLY the SQL, no explanation.
+
 Examples:
 Q: "How many Type 3 barricades on contract JOB-789?"
 → SELECT n1.properties->>'quantity' FROM kg_edges e
@@ -89,50 +110,50 @@ Q: "How many Type 3 barricades on contract JOB-789?"
    JOIN kg_nodes n2 ON e.target_id = n2.id
    WHERE n1.type = 'equipment' AND n1.label ILIKE 'Type 3%'
      AND n2.type = 'contract' AND n2.label = 'JOB-789';
+
 Return ONLY SQL.`;
 
   try {
     const sqlResult = await streamText({
-      model: xai('grok-4-fast'),
+      model: xai("grok-4-fast"),
       prompt: sqlPrompt,
     });
 
-    const sql = (await sqlResult.text).trim();  // Fixed: no .text()
+    const sql = (await sqlResult.text).trim();
 
-    // Safety check
-    if (!sql.toUpperCase().startsWith('SELECT') || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
-      return '[KG: Unsafe query blocked]';
+    if (!sql.toUpperCase().startsWith("SELECT") || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
+      return "[KG: Unsafe query blocked]";
     }
 
-    const { data, error } = await supabase.rpc('execute_custom_sql', { sql_query: sql });
+    const { data, error } = await bidxSupabase.rpc("execute_custom_sql", { sql_query: sql });
 
     if (error) {
-      console.error('KG SQL error:', error);
-      return '[KG: Query failed]';
+      console.error("KG SQL error:", error);
+      return `[KG: Query failed - ${error.message}]`;
     }
 
-    if (!data || data.length === 0) return '[KG: No data found]';
+    if (!data || data.length === 0) return "[KG: No data found]";
 
-    // Fixed: add : any to row
     return data
       .map((row: any, i: number) => `[KG Result ${i + 1}]\n${JSON.stringify(row, null, 2)}`)
-      .join('\n');
+      .join("\n");
   } catch (error) {
-    console.error('KG retrieval error:', error);
-    return '[KG: Retrieval failed]';
+    console.error("KG retrieval error:", error);
+    return "[KG: Retrieval failed]";
   }
 }
 
+// === POST HANDLER ===
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
   const prompt = convertToModelMessages(messages);
 
   const lastUserMsg = messages[messages.length - 1];
   const userQuery =
-    lastUserMsg?.role === 'user' ? ((lastUserMsg.parts?.[0] as any)?.text ?? '') : '';
+    lastUserMsg?.role === "user" ? ((lastUserMsg.parts?.[0] as any)?.text ?? "") : "";
 
-  let mutcdContext = '';
-  let kgContext = '';
+  let mutcdContext = "";
+  let kgContext = "";
 
   if (userQuery) {
     [mutcdContext, kgContext] = await Promise.all([
@@ -141,23 +162,22 @@ export async function POST(req: Request) {
     ]);
   }
 
-  const fullContext = [mutcdContext, kgContext].filter(Boolean).join('\n\n');
+  const fullContext = [mutcdContext, kgContext].filter(Boolean).join("\n\n");
 
-  // FIXED: Explicitly type as ModelMessage[]
   const enrichedPrompt: ModelMessage[] = [
-    { role: 'system', content: `${SYSTEM_PROMPT}\n\nContext:\n${fullContext}` },
+    { role: "system", content: `${SYSTEM_PROMPT}\n\nContext:\n${fullContext}` },
     ...prompt,
   ];
 
   const result = streamText({
-    model: xai('grok-4-fast'),
+    model: xai("grok-4-fast"),
     prompt: enrichedPrompt,
     abortSignal: req.signal,
   });
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ isAborted }) => {
-      if (isAborted) console.log('Stream aborted');
+      if (isAborted) console.log("Stream aborted");
     },
     consumeSseStream: consumeStream,
   });
