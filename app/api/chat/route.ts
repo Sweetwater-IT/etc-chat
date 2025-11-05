@@ -63,7 +63,7 @@ export async function POST(req: Request) {
   const lastMessage = messages[messages.length - 1];
   let userQuery = '';
   if (lastMessage?.role === 'user') {
-    userQuery = lastMessage.parts?.[0]?.text || '';
+    userQuery = (lastMessage.parts?.[0] as any)?.text || '';
   }
 
   let enrichedPrompt = prompt;
