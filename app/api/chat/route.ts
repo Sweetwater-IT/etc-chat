@@ -1,11 +1,11 @@
 import { consumeStream, convertToModelMessages, streamText, type UIMessage } from "ai"
-import { createXai } from '@ai-sdk/xai'; 
-import { createClient } from '@supabase/supabase-js';  
+import { createXai } from '@ai-sdk/xai'; // Create instance for key
+import { createClient } from '@supabase/supabase-js'; // Add this for Supabase
 
 export const maxDuration = 30
 
-const xai = createXai({ apiKey: process.env.GROK_API_KEY! }); 
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);  
+const xai = createXai({ apiKey: process.env.GROK_API_KEY! }); // Inject key
+const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!); // Add this for Supabase client
 const bidxSupabase = createClient(process.env.BIDX_SUPABASE_URL!, process.env.BIDX_SUPABASE_SERVICE_KEY!);
 
 const SYSTEM_PROMPT = `
@@ -19,7 +19,7 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 - Keep responses concise and professional.
 `;
 
-async function embedQuery(query: string): Promise<number[]> {  
+async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch('https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2', {
     method: 'POST',
     headers: {
@@ -28,18 +28,16 @@ async function embedQuery(query: string): Promise<number[]> {
     },
     body: JSON.stringify({ inputs: [query] }),
   });
-
   if (!response.ok) {
     const errorBody = await response.text();
     console.error('HF full response:', errorBody);
     throw new Error(`HF Embedding error: ${response.status} - ${response.statusText}`);
   }
-
   const result = await response.json();
-  return Array.isArray(result) ? result[0] : result;  // 384-dim vector
+  return Array.isArray(result) ? result[0] : result; // 384-dim vector
 }
 
-async function retrieveChunks(query: string, topK = 5): Promise<any[]> {  
+async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
   try {
     const queryEmbedding = await embedQuery(query);
     const { data } = await supabase.rpc('match_documents', {
@@ -47,7 +45,7 @@ async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
       match_threshold: 0.5,
       match_count: topK,
     });
-    console.log('Retrieved chunks:', data?.length || 0);  // Debug
+    console.log('Retrieved chunks:', data?.length || 0); // Debug
     return data || [];
   } catch (error) {
     console.error('Retrieval error:', error);
@@ -58,20 +56,18 @@ async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
 async function generateSQLAndExecute(userQuery: string): Promise<string> {
   try {
     // Prompt Grok to generate SQL for Bidx data
-    const sqlPrompt = `You are a SQL expert. Generate a safe SELECT query for the following user request on Bidx data (views: jobs_complete, estimate_complete). 
-    Use jobs_complete (includes estimate data). Only SELECT, no INSERT/UPDATE/DELETE. 
-    Filter by status='WON' for historical, or use available_jobs for open bids. 
-    Handle limits (e.g., last 6), conditions (e.g., flagging > 400), and ordering (e.g., created_at DESC). 
+    const sqlPrompt = `You are a SQL expert. Generate a safe SELECT query for the following user request on Bidx data (views: jobs_complete, estimate_complete).
+    Use jobs_complete (includes estimate data). Only SELECT, no INSERT/UPDATE/DELETE.
+    Filter by status='WON' for historical, or use available_jobs for open bids.
+    Handle limits (e.g., last 6), conditions (e.g., flagging > 400), and ordering (e.g., created_at DESC).
     Return ONLY the SQL query, no explanation or markdown.
-
     Request: ${userQuery}`;
 
     const sqlResult = await streamText({
       model: xai('grok-4-fast'),
       prompt: sqlPrompt,
     });
-
-    const sql = (await sqlResult.text()).trim();  
+    const sql = (await sqlResult.text()).trim();
     console.log('Generated SQL:', sql); // Debug
 
     // Validate SQL (basic safety)
@@ -82,10 +78,9 @@ async function generateSQLAndExecute(userQuery: string): Promise<string> {
 
     // Execute on Bidx Supabase
     const { data, error } = await bidxSupabase.rpc('execute_custom_sql', { sql_query: sql });
-
     if (error) {
       console.error('SQL execution error:', error);
-      return 'Error querying Bidx data.';
+    return 'Error querying Bidx data.';
     }
 
     // Summarize results for prompt
@@ -137,7 +132,7 @@ export async function POST(req: Request) {
   const result = streamText({
     model: xai('grok-4-fast'),
     prompt: enrichedPrompt,
-    abortSignal: req.signal,
+    abortSignal: req.json,
   })
 
   return result.toUIMessageStreamResponse({
