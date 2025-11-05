@@ -36,6 +36,25 @@ You are an AI assistant for Established Traffic Control.
 - Keep responses concise and professional.
 `;
 
+// === SCHEMA FETCHER ===
+async function getSchema(): Promise<string> {
+  try {
+    const { data, error } = await bidxSupabase
+      .from('information_schema.columns')
+      .select('table_name, column_name, data_type')
+      .in('table_name', ['jobs_complete'])
+      .in('column_name', ['admin_data', 'equipment_rental', 'mpt_rental']);
+
+    if (error || !data) return "Schema unavailable";
+
+    return data
+      .map(row => `${row.table_name}.${row.column_name}: ${row.data_type}`)
+      .join('\n');
+  } catch {
+    return "Schema fetch failed";
+  }
+}
+
 // === EMBEDDING FUNCTION (Hugging Face - Direct Model) ===
 async function embedQuery(query: string): Promise<number[]> {
   const response = await fetch(
@@ -94,30 +113,20 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
 
 // === KG SQL VIA LLM (uses bidxSupabase) ===
 async function retrieveKG(userQuery: string): Promise<string> {
-  const sqlPrompt = `You are a SQL expert for a traffic control Knowledge Graph.
-Tables:
-- jobs_complete (admin_data JSONB, equipment_rental JSONB array, mpt_rental JSONB, etc.)
+  const schema = await getSchema();
 
-Generate a SAFE SELECT query to answer: "${userQuery}"
-- Use JSONB: ->> 'key' or jsonb_array_elements()
-- For equipment: equipment_rental is an array of objects
-- For contract: admin_data->>'contractNumber'
-- Return ONLY the SQL, no explanation.
-- DO NOT end with a semicolon.
+  const sqlPrompt = `You are a SQL expert. Use this schema to answer: "${userQuery}"
 
-Examples:
-Q: "How many message boards on contract 115993?"
-→ WITH job AS (
-    SELECT equipment_rental, admin_data->>'contractNumber' AS contract
-    FROM jobs_complete
-    WHERE admin_data->>'contractNumber' = '115993'
-   )
-   SELECT 
-     COUNT(*) AS message_board_count
-   FROM job, jsonb_array_elements(equipment_rental) AS item
-   WHERE item->>'name' = 'Message Board';
+SCHEMA:
+${schema}
 
-Return ONLY SQL.`;
+RULES:
+- equipment_rental is JSON array → use json_array_elements() + LATERAL
+- Filter by item->>'name'
+- Contract: admin_data->>'contractNumber'
+- Return ONLY SQL. No explanation. No semicolon.
+
+Generate SQL now.`;
 
   try {
     const sqlResult = await streamText({
