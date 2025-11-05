@@ -96,21 +96,26 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
 async function retrieveKG(userQuery: string): Promise<string> {
   const sqlPrompt = `You are a SQL expert for a traffic control Knowledge Graph.
 Tables:
-- kg_nodes(id uuid, type text, label text, properties jsonb, embedding vector)
-- kg_edges(id uuid, source_id uuid, target_id uuid, relationship text, properties jsonb)
+- jobs_complete (admin_data JSONB, equipment_rental JSONB array, mpt_rental JSONB, etc.)
 
 Generate a SAFE SELECT query to answer: "${userQuery}"
-- Use JOINs to traverse relationships.
-- Access JSONB with ->> 'key'
+- Use JSONB: ->> 'key' or jsonb_array_elements()
+- For equipment: equipment_rental is an array of objects
+- For contract: admin_data->>'contractNumber'
 - Return ONLY the SQL, no explanation.
+- DO NOT end with a semicolon.
 
 Examples:
-Q: "How many Type 3 barricades on contract JOB-789?"
-→ SELECT n1.properties->>'quantity' FROM kg_edges e
-   JOIN kg_nodes n1 ON e.source_id = n1.id
-   JOIN kg_nodes n2 ON e.target_id = n2.id
-   WHERE n1.type = 'equipment' AND n1.label ILIKE 'Type 3%'
-     AND n2.type = 'contract' AND n2.label = 'JOB-789';
+Q: "How many message boards on contract 115993?"
+→ WITH job AS (
+    SELECT equipment_rental, admin_data->>'contractNumber' AS contract
+    FROM jobs_complete
+    WHERE admin_data->>'contractNumber' = '115993'
+   )
+   SELECT 
+     COUNT(*) AS message_board_count
+   FROM job, jsonb_array_elements(equipment_rental) AS item
+   WHERE item->>'name' = 'Message Board';
 
 Return ONLY SQL.`;
 
@@ -120,7 +125,8 @@ Return ONLY SQL.`;
       prompt: sqlPrompt,
     });
 
-    const sql = (await sqlResult.text).trim();
+    let sql = (await sqlResult.text).trim();
+    if (sql.endsWith(";")) sql = sql.slice(0, -1).trim();
 
     if (!sql.toUpperCase().startsWith("SELECT") || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
       return "[KG: Unsafe query blocked]";
