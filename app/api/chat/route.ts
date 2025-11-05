@@ -6,16 +6,18 @@ export const maxDuration = 30
 
 const xai = createXai({ apiKey: process.env.GROK_API_KEY! }); 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);  
-const bidxSupabase = createClient(process.env.BIDX_SUPABASE_URL!, process.env.BIDX_SUPABASE_SERVICE_KEY!);
+// Assuming KG is in the same Supabase project as MUTCD
+// If not, create a separate client: const kgSupabase = createClient(...)
 
 const SYSTEM_PROMPT = `
-You are an AI assistant for Established Traffic Control, specializing in MUTCD-based bid estimation for traffic plans.
-- Use the retrieved context from MUTCD docs and historical bids/jobs to answer accurately.
-- Always cite sources from the context at the end of your response (e.g., "[Source: MUTCD-2023, Chunk 106]").
-- For bid estimates, prompt for missing details one at a time (e.g., "What DBE value do you want (e.g., 0%)?").
-- Key fields to prompt if missing: dbe, county, rated (RATED/NON-RATED), emergencyJob (true/false), personnel, onSiteJobHours, division (PUBLIC/PRIVATE), etc.
-- Once all details gathered, estimate using formulas from data (e.g., markupRate=50%, calculate revenue/cost/gross_profit).
-- Reference edge cases from instructions if relevant.
+You are an AI assistant for Established Traffic Control.
+- Use MUTCD context for standards and rules.
+- Use Knowledge Graph (KG) context for equipment counts, contracts, jobs, and quantities.
+- KG has nodes (type, label, properties) and edges (source → relationship → target).
+- Always cite sources: [MUTCD: Section X], [KG: Contract #123]
+- For equipment queries (e.g., "How many Type 3s on JOB-789?"), use KG.
+- For rules (e.g., "When to use Type 3?"), use MUTCD.
+- Prompt for missing info one at a time.
 - Keep responses concise and professional.
 `;
 
@@ -36,10 +38,11 @@ async function embedQuery(query: string): Promise<number[]> {
   }
 
   const result = await response.json();
-  return Array.isArray(result) ? result[0] : result;  // 384-dim vector
+  return Array.isArray(result) ? result[0] : result;
 }
 
-async function retrieveChunks(query: string, topK = 5): Promise<any[]> {  
+// === MUTCD RAG ===
+async function retrieveMUTCD(query: string, topK = 5): Promise<string> {  
   try {
     const queryEmbedding = await embedQuery(query);
     const { data } = await supabase.rpc('match_documents', {
@@ -47,89 +50,91 @@ async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
       match_threshold: 0.5,
       match_count: topK,
     });
-    console.log('Retrieved chunks:', data?.length || 0);  // Debug
-    return data || [];
+    return data?.map(c => 
+      `[MUTCD: ${c.metadata.source}, Chunk ${c.metadata.chunk_index}]\n${c.content}`
+    ).join('\n\n') || '';
   } catch (error) {
-    console.error('Retrieval error:', error);
-    return [];
-  }
-}
-
-async function generateSQLAndExecute(userQuery: string): Promise<string> {
-  try {
-    // Prompt Grok to generate SQL for Bidx data
-    const sqlPrompt = `You are a SQL expert. Generate a safe SELECT query for the following user request on Bidx data (views: jobs_complete, estimate_complete). 
-    Use jobs_complete (includes estimate data). Only SELECT, no INSERT/UPDATE/DELETE. 
-    Filter by status='WON' for historical, or use available_jobs for open bids. 
-    Handle limits (e.g., last 6), conditions (e.g., flagging > 400), and ordering (e.g., created_at DESC). 
-    Return ONLY the SQL query, no explanation or markdown.
-
-    Request: ${userQuery}`;
-
-    const sqlResult = await streamText({
-      model: xai('grok-4-fast'),
-      prompt: sqlPrompt,
-    });
-
-    const sql = (await sqlResult.text()).trim();  
-    console.log('Generated SQL:', sql); // Debug
-
-    // Validate SQL (basic safety)
-    if (!sql.toUpperCase().startsWith('SELECT') || sql.toUpperCase().includes('DROP') || sql.toUpperCase().includes('INSERT')) {
-      console.error('Unsafe SQL generated:', sql);
-      return 'Error: Unsafe SQL query.';
-    }
-
-    // Execute on Bidx Supabase
-    const { data, error } = await bidxSupabase.rpc('execute_custom_sql', { sql_query: sql });
-
-    if (error) {
-      console.error('SQL execution error:', error);
-      return 'Error querying Bidx data.';
-    }
-
-    // Summarize results for prompt
-    const summary = data?.map(row => {
-      const admin = row.admin_data ? JSON.parse(row.admin_data) : {};
-      return `Job #${row.job_number || 'N/A'} (ID ${row.id}): Revenue $${row.total_revenue || 'N/A'}, Cost $${row.total_cost || 'N/A'}, County ${admin.county?.name || 'N/A'}, Date ${row.created_at?.slice(0, 10) || 'N/A'}`;
-    }).join('\n') || 'No matching data found.';
-
-    console.log('Retrieved Bidx data:', data?.length || 0);
-    return summary;
-  } catch (error) {
-    console.error('Text-to-SQL error:', error);
+    console.error('MUTCD retrieval error:', error);
     return '';
   }
 }
 
-export async function POST(req: Request) {
-  const { messages }: { messages: UIMessage[] } = await req.json()
+// === KG SQL via LLM ===
+async function retrieveKG(userQuery: string): Promise<string> {
+  const sqlPrompt = `You are a SQL expert for a traffic control Knowledge Graph.
+Tables:
+- kg_nodes(id uuid, type text, label text, properties jsonb, embedding vector)
+- kg_edges(id uuid, source_id uuid, target_id uuid, relationship text, properties jsonb)
 
-  const prompt = convertToModelMessages(messages)
+Generate a SAFE SELECT query to answer: "${userQuery}"
+- Use JOINs to traverse relationships.
+- Access JSONB with ->> 'key'
+- Return ONLY the SQL, no explanation.
 
-  // Extract last user query for RAG
-  const lastMessage = messages[messages.length - 1];
-  let userQuery = '';
-  if (lastMessage?.role === 'user') {
-    userQuery = (lastMessage.parts?.[0] as any)?.text || '';
+Examples:
+Q: "How many Type 3 barricades on contract JOB-789?"
+→ SELECT n1.properties->>'quantity' FROM kg_edges e
+   JOIN kg_nodes n1 ON e.source_id = n1.id
+   JOIN kg_nodes n2 ON e.target_id = n2.id
+   WHERE n1.type = 'equipment' AND n1.label ILIKE 'Type 3%'
+     AND n2.type = 'contract' AND n2.label = 'JOB-789';
+
+Q: "List all equipment on contract ABC123"
+→ SELECT n1.label, n1.properties->>'quantity' FROM ...
+
+Return ONLY SQL.`;
+
+  try {
+    const sqlResult = await streamText({
+      model: xai('grok-4-fast'),
+      prompt: sqlPrompt,
+    });
+    const sql = (await sqlResult.text()).trim();
+
+    // Safety check
+    if (!sql.toUpperCase().startsWith('SELECT') || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
+      return '[KG: Unsafe query blocked]';
+    }
+
+    const { data, error } = await supabase.rpc('execute_custom_sql', { sql_query: sql });
+
+    if (error) {
+      console.error('KG SQL error:', error);
+      return '[KG: Query failed]';
+    }
+
+    if (!data || data.length === 0) return '[KG: No data found]';
+
+    return data.map((row, i) => `[KG Result ${i+1}]\n${JSON.stringify(row, null, 2)}`).join('\n');
+  } catch (error) {
+    console.error('KG retrieval error:', error);
+    return '[KG: Retrieval failed]';
   }
+}
 
-  let enrichedPrompt = prompt;
+export async function POST(req: Request) {
+  const { messages }: { messages: UIMessage[] } = await req.json();
+  const prompt = convertToModelMessages(messages);
+
+  const lastUserMsg = messages[messages.length - 1];
+  const userQuery = lastUserMsg?.role === 'user' 
+    ? (lastUserMsg.parts?.[0] as any)?.text || '' 
+    : '';
+
   let mutcdContext = '';
-  let bidxContext = '';
+  let kgContext = '';
 
   if (userQuery) {
-    // MUTCD retrieval
-    const chunks = await retrieveChunks(userQuery);
-    mutcdContext = chunks.map(c => `Source: ${c.metadata.source} (Chunk ${c.metadata.chunk_index})\n${c.content}`).join('\n\n');
-
-    // Bidx retrieval (text-to-SQL)
-    bidxContext = await generateSQLAndExecute(userQuery);
+    // Parallel retrieval
+    [mutcdContext, kgContext] = await Promise.all([
+      retrieveMUTCD(userQuery),
+      retrieveKG(userQuery)
+    ]);
   }
 
-  const fullContext = [mutcdContext, bidxContext].filter(Boolean).join('\n\n');
+  const fullContext = [mutcdContext, kgContext].filter(Boolean).join('\n\n');
 
-  enrichedPrompt = [
+  const enrichedPrompt = [
     { role: 'system', content: `${SYSTEM_PROMPT}\n\nContext:\n${fullContext}` },
     ...prompt,
   ];
@@ -138,14 +143,12 @@ export async function POST(req: Request) {
     model: xai('grok-4-fast'),
     prompt: enrichedPrompt,
     abortSignal: req.signal,
-  })
+  });
 
   return result.toUIMessageStreamResponse({
     onFinish: async ({ isAborted }) => {
-      if (isAborted) {
-        console.log("Aborted")
-      }
+      if (isAborted) console.log("Stream aborted");
     },
     consumeSseStream: consumeStream,
-  })
+  });
 }
