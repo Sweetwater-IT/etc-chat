@@ -72,17 +72,16 @@ async function retrieveMUTCD(query: string, topK = 5): Promise<string> {
 }
 
 // === KG SQL via LLM ===
+// === KG SQL via LLM ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const sqlPrompt = `You are a SQL expert for a traffic control Knowledge Graph.
 Tables:
 - kg_nodes(id uuid, type text, label text, properties jsonb, embedding vector)
 - kg_edges(id uuid, source_id uuid, target_id uuid, relationship text, properties jsonb)
-
 Generate a SAFE SELECT query to answer: "${userQuery}"
 - Use JOINs to traverse relationships.
 - Access JSONB with ->> 'key'
 - Return ONLY the SQL, no explanation.
-
 Examples:
 Q: "How many Type 3 barricades on contract JOB-789?"
 → SELECT n1.properties->>'quantity' FROM kg_edges e
@@ -90,10 +89,6 @@ Q: "How many Type 3 barricades on contract JOB-789?"
    JOIN kg_nodes n2 ON e.target_id = n2.id
    WHERE n1.type = 'equipment' AND n1.label ILIKE 'Type 3%'
      AND n2.type = 'contract' AND n2.label = 'JOB-789';
-
-Q: "List all equipment on contract ABC123"
-→ SELECT n1.label, n1.properties->>'quantity' FROM ...
-
 Return ONLY SQL.`;
 
   try {
@@ -101,7 +96,8 @@ Return ONLY SQL.`;
       model: xai('grok-4-fast'),
       prompt: sqlPrompt,
     });
-    const sql = (await sqlResult.text).trim();
+
+    const sql = (await sqlResult.text).trim();  // Fixed: no .text()
 
     // Safety check
     if (!sql.toUpperCase().startsWith('SELECT') || /DROP|INSERT|UPDATE|DELETE/i.test(sql)) {
@@ -117,7 +113,10 @@ Return ONLY SQL.`;
 
     if (!data || data.length === 0) return '[KG: No data found]';
 
-    return data.map((row, i) => `[KG Result ${i+1}]\n${JSON.stringify(row, null, 2)}`).join('\n');
+    // Fixed: add : any to row
+    return data
+      .map((row: any, i: number) => `[KG Result ${i + 1}]\n${JSON.stringify(row, null, 2)}`)
+      .join('\n');
   } catch (error) {
     console.error('KG retrieval error:', error);
     return '[KG: Retrieval failed]';
