@@ -22,7 +22,7 @@ async function embedQuery(query: string): Promise<number[]> {
       'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ inputs: query }),  // Single string (fixes similarity error)
+    body: JSON.stringify({ inputs: [query] }),  // Array for embedding (fixes similarity pipeline error)
   });
 
   if (!response.ok) {
@@ -92,6 +92,8 @@ export async function POST(req: Request) {
 
   if (!response.ok) {
     console.error('Grok response status:', response.status);  // Debug log
+    const errorBody = await response.text();
+    console.error('Grok full error:', errorBody);
     throw new Error(`Grok API error: ${response.statusText}`);
   }
 
@@ -101,7 +103,6 @@ export async function POST(req: Request) {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-
       const pump = () => {
         reader?.read().then(({ done, value }) => {
           if (done) {
@@ -111,11 +112,10 @@ export async function POST(req: Request) {
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
-
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
-              if (data === '[DONE]') continue; 
+              if (data === '[DONE]') continue;
               try {
                 const parsed = JSON.parse(data);
                 const delta = parsed.choices[0]?.delta?.content;
