@@ -5,8 +5,10 @@ import { consumeStream, convertToModelMessages, streamText, type UIMessage } fro
 export const maxDuration = 30;
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);
-const hf = new HfInference(process.env.HUGGINGFACE_API_KEY!);
-
+const hf = new HfInference({
+  token: process.env.HUGGINGFACE_API_KEY!,
+  baseUrl: 'https://router.huggingface.co/hf-inference'  // Add this for new endpoint
+});
 const SYSTEM_PROMPT = `
 You are an AI assistant for Established Traffic Control, specializing in MUTCD-based bid estimation for traffic plans.
 - Use retrieved context from MUTCD docs and historical bids/jobs.
@@ -16,11 +18,10 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 - Reference edge cases from instructions if relevant.
 - Keep responses concise and professional.
 `;
-
 async function embedQuery(query: string): Promise<number[]> {
   const response = await hf.featureExtraction({
     model: 'sentence-transformers/all-MiniLM-L6-v2',
-    inputs: [{ text: query }] as Record<string, unknown>[],  // Object wrapper for single input (matches TS)
+    inputs: [{ text: query }] as Record<string, unknown>[], // Object wrapper for single input (matches TS)
   });
   // Extract the vector from response (HF returns array or object)
   const embedding = Array.isArray(response) ? response[0] : (response as any)[0];
@@ -74,7 +75,7 @@ export async function POST(req: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'grok-beta',
+      model: 'grok-4-fast',
       messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
