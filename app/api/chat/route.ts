@@ -22,16 +22,17 @@ async function embedQuery(query: string): Promise<number[]> {
       'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ inputs: [query] }),  // Array for single input (fixes 400)
+    body: JSON.stringify({ inputs: query }),  // Single string (fixes similarity error)
   });
 
   if (!response.ok) {
-    console.error('HF full response:', await response.text());  // Debug: Logs body for details
+    const errorBody = await response.text();
+    console.error('HF full response:', errorBody);  // Debug log for details
     throw new Error(`HF Embedding error: ${response.status} - ${response.statusText}`);
   }
 
   const result = await response.json();
-  return Array.isArray(result) ? result[0] : result;  // Extract vector (384-dim array)
+  return Array.isArray(result) ? result[0] : result;  // Extract 384-dim vector
 }
 
 async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
