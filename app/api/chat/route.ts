@@ -115,8 +115,8 @@ async function getSchema(): Promise<string> {
 // === KG SQL VIA LLM (Schema-Driven + Anti-Hallucination) ===
 async function retrieveKG(userQuery: string): Promise<string> {
   const schema = await getSchema();
-  const sqlPrompt = `You are a SQL expert. USE ONLY THESE COLUMNS. NO OTHER COLUMNS. NO "items". NO "products". ONLY SCHEMA.
-SCHEMA (EXACT COLUMNS ONLY):
+  const sqlPrompt = `You are a SQL expert. USE ONLY BIDX TABLES (estimate_complete, jobs_complete). IGNORE KG TABLES (kg_nodes, kg_edges) unless query mentions "graph" or "nodes".
+SCHEMA (BIDX ONLY):
 ${schema}
 USER QUERY: "${userQuery}"
 RULES:
