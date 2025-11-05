@@ -9,11 +9,13 @@ You are an AI assistant for Established Traffic Control, specializing in MUTCD-b
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
-  const userQuery = messages[messages.length - 1]?.content || '';
+  // Safe extraction for TS (fixes the 'content' error)
+  const lastMessage = messages[messages.length - 1];
+  const userQuery = lastMessage?.role === 'user' && lastMessage.parts?.length > 0 ? lastMessage.parts[0].content || '' : '';
 
   let enrichedMessages = convertToModelMessages(messages);
 
-  // Temporary: Skip RAG for baseline test
+  // Basic: Skip RAG for baseline test
   enrichedMessages = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...enrichedMessages,
@@ -21,7 +23,6 @@ export async function POST(req: Request) {
 
   console.log('Sending to Grok:', enrichedMessages.length, 'messages');  // Debug
 
-  // Stream via Grok API
   const response = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'grok-4-fast',
+      model: 'grok-beta',
       messages: enrichedMessages,
       stream: true,
       temperature: 0.7,
@@ -50,7 +51,6 @@ export async function POST(req: Request) {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-
       const pump = () => {
         reader?.read().then(({ done, value }) => {
           if (done) {
@@ -60,7 +60,6 @@ export async function POST(req: Request) {
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
-
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
