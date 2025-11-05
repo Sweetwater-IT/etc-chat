@@ -84,7 +84,7 @@ async function generateSQLAndExecute(userQuery: string): Promise<string> {
     }
 
     // Summarize results for prompt
-    const summary = data?.map(row => {
+    const summary = data?.map((row: any) => {
       const admin = row.admin_data ? JSON.parse(row.admin_data) : {};
       return `Job #${row.job_number || 'N/A'} (ID ${row.id}): Revenue $${row.total_revenue || 'N/A'}, Cost $${row.total_cost || 'N/A'}, County ${admin.county?.name || 'N/A'}, Date ${row.created_at?.slice(0, 10) || 'N/A'}`;
     }).join('\n') || 'No matching data found.';
