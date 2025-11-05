@@ -45,9 +45,15 @@ async function retrieveChunks(query: string, topK = 5): Promise<any[]> {
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
-  // Extract last user message content from parts (fixes TS on UIMessage type)
+  // Extract last user message content from parts (safe TS handling for UIMessagePart types)
   const lastMessage = messages[messages.length - 1];
-  const userQuery = lastMessage?.role === 'user' ? lastMessage.parts?.[0]?.text || '' : '';
+  let userQuery = '';
+  if (lastMessage?.role === 'user' && lastMessage.parts?.length > 0) {
+    const firstPart = lastMessage.parts[0];
+    if (firstPart.type === 'text') {
+      userQuery = (firstPart as any).text || '';
+    }
+  }
 
   let enrichedMessages = convertToModelMessages(messages);
 
