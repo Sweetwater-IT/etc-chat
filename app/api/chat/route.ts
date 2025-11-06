@@ -84,10 +84,9 @@ async function retrieveMUTCD(query: string, topK = 3): Promise<string> {
 interface BidChunk {
   id: number;
   metadata: {
-    status: string;
-    created_at: string;
-    source_idx: number;
-    searchable_text: string;
+    contract_number: string;   
+    chunk_index: number;      
+    total_chunks: number;     
   };
 }
 async function retrieveBids(query: string, topK = 3): Promise<string> {
