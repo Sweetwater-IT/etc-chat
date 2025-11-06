@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────────────────────────────
-//  POST handler – MUTCD + BID VECTORS (FULL JSON ACCESS)
+//  POST handler – MUTCD + BID VECTORS (FULL JSON, NO HARDCODED ANSWERS)
 // ──────────────────────────────────────────────────────────────────────
 import {
   consumeStream,
@@ -24,23 +24,17 @@ const bidxSupabase = createClient(
 );
 const xai = createXai({ apiKey: process.env.GROK_API_KEY! });
 
-// ────── System prompt ──────
+// ────── System prompt – NO EXAMPLES, NO HARDCODED ANSWERS ──────
 const SYSTEM_PROMPT = `
 You are an AI assistant for Established Traffic Control.
 
 RULES:
-- Use [MUTCD] for standards.
-- Use [BID] for contract data.
-- Extract ANY field from JSON (e.g., estimator, dbe, sandbag, flagging revenue).
-- Always cite: [BID: #ID – source: CONTRACT_NUMBER]
-- If field not found, say "Not specified".
-
-EXAMPLES:
-Q: Who estimated contract 120641?
-A: Estimator: Napoleon Dunn [BID: #1016 – source: 120641]
-
-Q: How many sandbags on RED HILL?
-A: Sandbags: 430 [BID: #1012 – source: RED HILL]
+- Use [MUTCD] for standards and rules.
+- Use [BID] for contract, location, equipment, and financial details.
+- Extract values directly from the JSON provided in [BID].
+- Always cite the source: [BID: #ID – source: CONTRACT_NUMBER]
+- If a field is not found, say "Not specified".
+- Be concise and professional.
 `;
 
 // ────── Embedding (bge‑small → 384) ──────
@@ -90,7 +84,7 @@ async function retrieveMUTCD(query: string, topK = 3): Promise<string> {
   }
 }
 
-// ────── BID VECTOR RAG – FULL JSON ──────
+// ────── BID VECTOR RAG – FULL JSON (AI extracts any field) ──────
 interface BidRow {
   id: number;
   admin_data: any;
