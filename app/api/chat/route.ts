@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────────────────────────────
-//  POST handler – ONLY MUTCD + BID VECTORS
+//  POST handler – MUTCD + BID VECTORS (FIXED METADATA)
 // ──────────────────────────────────────────────────────────────────────
 import {
   consumeStream,
@@ -80,13 +80,13 @@ async function retrieveMUTCD(query: string, topK = 3): Promise<string> {
   }
 }
 
-// ────── BID VECTOR RAG ──────
+// ────── BID VECTOR RAG – FIXED METADATA ──────
 interface BidChunk {
   id: number;
   metadata: {
-    contract_number: string;   
-    chunk_index: number;      
-    total_chunks: number;     
+    contract_number: string;   // ← NEW
+    chunk_index: number;       // ← NEW
+    total_chunks: number;      // ← NEW
   };
 }
 async function retrieveBids(query: string, topK = 3): Promise<string> {
@@ -101,7 +101,8 @@ async function retrieveBids(query: string, topK = 3): Promise<string> {
     return data
       .map(
         (c: BidChunk) =>
-          `[BID: #${c.id} – ${c.metadata.searchable_text}]\nStatus: ${c.metadata.status}`
+          `[BID: #${c.id} – source: ${c.metadata.contract_number}]\n` +
+          `Chunk ${c.metadata.chunk_index}/${c.metadata.total_chunks}`
       )
       .join("\n\n");
   } catch (e) {
