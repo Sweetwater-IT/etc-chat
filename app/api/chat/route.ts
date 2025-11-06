@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────────────────────────────
-//  POST handler – MUTCD + BID VECTORS (FIXED METADATA)
+//  POST handler – MUTCD + BID VECTORS (FULL JSON ACCESS)
 // ──────────────────────────────────────────────────────────────────────
 import {
   consumeStream,
@@ -27,10 +27,20 @@ const xai = createXai({ apiKey: process.env.GROK_API_KEY! });
 // ────── System prompt ──────
 const SYSTEM_PROMPT = `
 You are an AI assistant for Established Traffic Control.
-- Use [MUTCD] for standards and rules.
-- Use [BID] for contract, location, and equipment details.
-- Always cite sources exactly as shown.
-- Keep answers concise and professional.
+
+RULES:
+- Use [MUTCD] for standards.
+- Use [BID] for contract data.
+- Extract ANY field from JSON (e.g., estimator, dbe, sandbag, flagging revenue).
+- Always cite: [BID: #ID – source: CONTRACT_NUMBER]
+- If field not found, say "Not specified".
+
+EXAMPLES:
+Q: Who estimated contract 120641?
+A: Estimator: Napoleon Dunn [BID: #1016 – source: 120641]
+
+Q: How many sandbags on RED HILL?
+A: Sandbags: 430 [BID: #1012 – source: RED HILL]
 `;
 
 // ────── Embedding (bge‑small → 384) ──────
@@ -80,14 +90,21 @@ async function retrieveMUTCD(query: string, topK = 3): Promise<string> {
   }
 }
 
-// ────── BID VECTOR RAG – FIXED METADATA ──────
-interface BidChunk {
+// ────── BID VECTOR RAG – FULL JSON ──────
+interface BidRow {
   id: number;
+  admin_data: any;
+  mpt_rental: any;
+  flagging: any;
+  equipment_rental: any;
+  service_work: any;
+  permanent_signs: any;
   metadata: {
-    contract_number: string;   // ← NEW
-    chunk_index: number;       // ← NEW
-    total_chunks: number;      // ← NEW
+    contract_number: string;
+    chunk_index: number;
+    total_chunks: number;
   };
+  similarity: number;
 }
 async function retrieveBids(query: string, topK = 3): Promise<string> {
   try {
@@ -97,13 +114,22 @@ async function retrieveBids(query: string, topK = 3): Promise<string> {
       match_threshold: 0.5,
       match_count: topK,
     });
+
     if (!data?.length) return "";
+
     return data
-      .map(
-        (c: BidChunk) =>
-          `[BID: #${c.id} – source: ${c.metadata.contract_number}]\n` +
-          `Chunk ${c.metadata.chunk_index}/${c.metadata.total_chunks}`
-      )
+      .map((row: BidRow) => {
+        const c = row.metadata.contract_number;
+        return `[BID: #${row.id} – source: ${c}]\n` +
+               `Full Data: ${JSON.stringify({
+                 admin_data: row.admin_data,
+                 mpt_rental: row.mpt_rental,
+                 flagging: row.flagging,
+                 equipment_rental: row.equipment_rental,
+                 service_work: row.service_work,
+                 permanent_signs: row.permanent_signs
+               }, null, 2)}`;
+      })
       .join("\n\n");
   } catch (e) {
     console.error("Bid vector error:", e);
